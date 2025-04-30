@@ -5,6 +5,7 @@ import os
 import sys
 from pathlib import Path
 import numpy as np
+import traceback
 from granger_analysis import GrangerCausalityAnalyzer
 from visualize_matrix import plot_connectivity_matrix
 from visualize_network import plot_network_graph
@@ -19,6 +20,10 @@ from statsmodels.stats.multicomp import pairwise_tukeyhsd, MultiComparison
 from statsmodels.stats.diagnostic import het_breuschpagan
 from statsmodels.stats.power import TTestPower, FTestPower
 import warnings
+import matplotlib.pyplot as plt
+import networkx as nx
+import seaborn as sns
+import pingouin as pg
 warnings.filterwarnings('ignore')
 
 class FileInfo:
@@ -71,6 +76,10 @@ class GrangerAnalysisGUI:
         
         # Add menu bar
         self._create_menu_bar()
+        
+        # Add a button for statistics in the main interface too
+        stats_button = ttk.Button(self.root, text="Open Statistics Window", command=self.create_stats_frame)
+        stats_button.pack(pady=10)
         
     def create_file_frame(self):
         """Create the file selection frame"""
@@ -170,28 +179,21 @@ class GrangerAnalysisGUI:
         options_frame = ttk.Frame(viz_frame)
         options_frame.pack(fill="x", padx=10, pady=5)
         
-        ttk.Label(options_frame, text="Visualization Level:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-        self.viz_level = tk.StringVar(value="Individual")
-        viz_level_combo = ttk.Combobox(options_frame, textvariable=self.viz_level)
-        viz_level_combo['values'] = ('Individual', 'Condition', 'Timepoint', 'Condition × Timepoint')
-        viz_level_combo.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
-        
-        ttk.Label(options_frame, text="Metric Type:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-        self.metric_type = tk.StringVar(value="Global")
+        ttk.Label(options_frame, text="Metric Type:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        self.metric_type = tk.StringVar(value="All")
         metric_type_combo = ttk.Combobox(options_frame, textvariable=self.metric_type)
-        metric_type_combo['values'] = ('Global', 'Nodal', 'Network', 'Pairwise', 'Matrix')
-        metric_type_combo.grid(row=1, column=1, sticky="ew", padx=5, pady=5)
+        metric_type_combo['values'] = ('All', 'Global', 'Nodal', 'Network', 'Pairwise', 'Matrix')
+        metric_type_combo.grid(row=0, column=1, sticky="ew", padx=5, pady=5)
         
         # Visualization buttons
         btn_frame = ttk.Frame(viz_frame)
         btn_frame.pack(fill="x", padx=10, pady=5)
         
-        ttk.Button(btn_frame, text="Generate Visualization", command=self.generate_visualization).pack(side="left", padx=5)
-        ttk.Button(btn_frame, text="Export Visualizations", command=self.export_visualizations).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Generate All Visualizations", command=self.generate_visualization).pack(side="left", padx=5)
         
         # Configure grid weights
         options_frame.columnconfigure(1, weight=1)
-        
+    
     def create_stats_frame(self):
         """Create the statistical analysis frame"""
         # Create a new window for statistical analysis
@@ -786,24 +788,679 @@ class GrangerAnalysisGUI:
             messagebox.showerror("Table Generation Error", f"Error generating tables: {str(e)}")
     
     def generate_visualization(self):
-        """Generate visualizations based on the selected options"""
+        """Generate all types of visualizations (individual, condition, timepoint, condition×timepoint)"""
         if not self.analyzer.analyses:
             messagebox.showwarning("No Analyses", "No analyses available. Please analyze data first.")
             return
         
-        # Get selected visualization level and metric type
-        level = self.viz_level.get()
-        metric_type = self.metric_type.get()
+        # Get selected metric type
+        selected_metric_type = self.metric_type.get()
+        
+        # Ask for output directory
+        output_dir = filedialog.askdirectory(title="Select directory for visualization output")
+        
+        if not output_dir:
+            return
+        
+        # Determine which metric types to generate
+        metric_types = []
+        if selected_metric_type == "All":
+            metric_types = ['Global', 'Nodal', 'Network', 'Pairwise', 'Matrix']
+        else:
+            metric_types = [selected_metric_type]
+        
+        # Create main figures directory
+        figures_dir = os.path.join(output_dir, 'figures')
+        os.makedirs(figures_dir, exist_ok=True)
+        
+        # Create subdirectories for different analysis levels
+        individual_dir = os.path.join(figures_dir, 'individual')
+        condition_dir = os.path.join(figures_dir, 'condition')
+        timepoint_dir = os.path.join(figures_dir, 'timepoint')
+        condition_time_dir = os.path.join(figures_dir, 'condition_x_time')
+        
+        os.makedirs(individual_dir, exist_ok=True)
+        os.makedirs(condition_dir, exist_ok=True)
+        os.makedirs(timepoint_dir, exist_ok=True)
+        os.makedirs(condition_time_dir, exist_ok=True)
         
         try:
-            # Implement visualization based on level and metric type
-            # This would call appropriate visualization methods based on the selections
-            messagebox.showinfo("Visualization", f"Generating {metric_type} visualization at {level} level")
+            # 1. Individual level: Generate visualizations for each analysis
+            for key, analysis in self.analyzer.analyses.items():
+                participant_id = analysis['metadata']['participant_id']
+                timepoint = analysis['metadata']['timepoint']
+                condition = analysis['metadata']['condition']
+                
+                base_name = f"{participant_id}_{timepoint}_{condition}"
+                
+                for metric_type in metric_types:
+                    self._generate_individual_visualization(analysis, key, metric_type, 
+                                                         base_name, individual_dir)
             
-            # This is a placeholder - actual implementation would depend on your visualization modules
+            # 2. Condition level: Group by condition (combine timepoints)
+            condition_data = {}
+            for key, analysis in self.analyzer.analyses.items():
+                condition = analysis['metadata']['condition']
+                
+                if condition not in condition_data:
+                    condition_data[condition] = []
+                
+                condition_data[condition].append((key, analysis))
+            
+            for condition, analyses in condition_data.items():
+                base_name = f"condition_{condition}"
+                for metric_type in metric_types:
+                    self._generate_group_visualization(analyses, metric_type, 
+                                                    base_name, condition_dir, 
+                                                    f"Condition: {condition}")
+            
+            # 3. Timepoint level: Group by timepoint (combine conditions)
+            timepoint_data = {}
+            for key, analysis in self.analyzer.analyses.items():
+                timepoint = analysis['metadata']['timepoint']
+                
+                if timepoint not in timepoint_data:
+                    timepoint_data[timepoint] = []
+                
+                timepoint_data[timepoint].append((key, analysis))
+            
+            for timepoint, analyses in timepoint_data.items():
+                base_name = f"timepoint_{timepoint}"
+                for metric_type in metric_types:
+                    self._generate_group_visualization(analyses, metric_type, 
+                                                    base_name, timepoint_dir, 
+                                                    f"Timepoint: {timepoint}")
+            
+            # 4. Condition x Timepoint level: Create time-series visualization
+            # First, organize data by condition and timepoint
+            condition_timepoint_data = {}
+            
+            # Get all conditions and timepoints
+            all_conditions = set()
+            all_timepoints = set()
+            
+            for key, analysis in self.analyzer.analyses.items():
+                condition = analysis['metadata']['condition']
+                timepoint = analysis['metadata']['timepoint']
+                
+                all_conditions.add(condition)
+                all_timepoints.add(timepoint)
+                
+                if condition not in condition_timepoint_data:
+                    condition_timepoint_data[condition] = {}
+                
+                condition_timepoint_data[condition][timepoint] = (key, analysis)
+            
+            # Convert to sorted lists
+            all_conditions = sorted(all_conditions)
+            all_timepoints = sorted(all_timepoints)
+            
+            # Generate time-series visualization for each metric type
+            for metric_type in metric_types:
+                self._generate_time_series_visualization(condition_timepoint_data, 
+                                                      all_conditions, all_timepoints, 
+                                                      metric_type, condition_time_dir)
+            
+            messagebox.showinfo("Visualization Complete", 
+                             f"All visualizations have been generated for the following levels:\n\n"
+                             f"- Individual participants ({len(self.analyzer.analyses)} analyses)\n"
+                             f"- By condition ({len(condition_data)} conditions)\n"
+                             f"- By timepoint ({len(timepoint_data)} timepoints)\n"
+                             f"- Condition × Timepoint interactions")
             
         except Exception as e:
+            traceback.print_exc()
             messagebox.showerror("Visualization Error", f"Error generating visualization: {str(e)}")
+
+    def _generate_individual_visualization(self, analysis, key, metric_type, base_name, output_dir):
+        """Generate individual visualization for a single analysis"""
+        participant_id = analysis['metadata']['participant_id']
+        timepoint = analysis['metadata']['timepoint']
+        condition = analysis['metadata']['condition']
+        
+        title = f"{metric_type} Metrics: {participant_id} {timepoint} {condition}"
+        
+        if metric_type == "Global":
+            plot_global_metrics(
+                analysis['global'], 
+                title, 
+                os.path.join(output_dir, f"{base_name}_global.png")
+            )
+        
+        elif metric_type == "Nodal":
+            plot_nodal_metrics(
+                analysis['nodal'], 
+                title, 
+                os.path.join(output_dir, f"{base_name}_nodal.png")
+            )
+        
+        elif metric_type == "Network":
+            G = self.analyzer.create_network_graph(key)
+            plot_network_graph(
+                G, 
+                title, 
+                os.path.join(output_dir, f"{base_name}_network.png")
+            )
+        
+        elif metric_type == "Pairwise":
+            plot_pairwise_comparison(
+                analysis['pairwise'], 
+                title, 
+                os.path.join(output_dir, f"{base_name}_pairwise.png")
+            )
+        
+        elif metric_type == "Matrix":
+            plot_connectivity_matrix(
+                analysis['connectivity_matrix'], 
+                title, 
+                os.path.join(output_dir, f"{base_name}_matrix.png")
+            )
+
+    def _generate_group_visualization(self, analyses, metric_type, base_name, output_dir, title_prefix):
+        """Generate group-level visualization by combining multiple analyses"""
+        if metric_type == "Global":
+            # Combine global metrics across analyses
+            combined_global = self._combine_global_metrics([a for _, a in analyses])
+            plot_global_metrics(
+                combined_global, 
+                f"{title_prefix} - Global Metrics", 
+                os.path.join(output_dir, f"{base_name}_global.png")
+            )
+        
+        elif metric_type == "Nodal":
+            # Combine nodal metrics across analyses
+            combined_nodal = self._combine_nodal_metrics([a for _, a in analyses])
+            plot_nodal_metrics(
+                combined_nodal, 
+                f"{title_prefix} - Nodal Metrics", 
+                os.path.join(output_dir, f"{base_name}_nodal.png")
+            )
+        
+        elif metric_type == "Network":
+            # Create an average connectivity matrix and convert to graph
+            combined_matrix = self._combine_connectivity_matrices([a for _, a in analyses])
+            
+            # Convert to graph
+            G = nx.DiGraph()
+            for source in combined_matrix.index:
+                for target in combined_matrix.columns:
+                    if source != target and combined_matrix.loc[source, target] > 0.0005:
+                        G.add_edge(source, target, weight=combined_matrix.loc[source, target])
+            
+            plot_network_graph(
+                G, 
+                f"{title_prefix} - Network Graph", 
+                os.path.join(output_dir, f"{base_name}_network.png")
+            )
+        
+        elif metric_type == "Pairwise":
+            # Combine pairwise metrics across analyses
+            combined_pairwise = self._combine_pairwise_metrics([a for _, a in analyses])
+            plot_pairwise_comparison(
+                combined_pairwise, 
+                f"{title_prefix} - Pairwise Connections", 
+                os.path.join(output_dir, f"{base_name}_pairwise.png")
+            )
+        
+        elif metric_type == "Matrix":
+            # Create an average connectivity matrix
+            combined_matrix = self._combine_connectivity_matrices([a for _, a in analyses])
+            plot_connectivity_matrix(
+                combined_matrix, 
+                f"{title_prefix} - Connectivity Matrix", 
+                os.path.join(output_dir, f"{base_name}_matrix.png")
+            )
+
+    def _generate_time_series_visualization(self, condition_timepoint_data, all_conditions, all_timepoints, metric_type, output_dir):
+        """Generate visualizations showing how conditions change over time"""
+        all_timepoints = sorted(all_timepoints)
+        
+        # Create a subdirectory specifically for time series plots
+        timeseries_dir = os.path.join(output_dir, "condition_x_time")
+        os.makedirs(timeseries_dir, exist_ok=True)
+        
+        if metric_type == "Global":
+            # For each global metric, create a figure showing changes over time
+            # Get the first analysis to see what metrics are available
+            first_condition = next(iter(condition_timepoint_data))
+            first_timepoint = next(iter(condition_timepoint_data[first_condition]))
+            first_analysis = condition_timepoint_data[first_condition][first_timepoint][1]
+            
+            for metric_name in first_analysis['global'].keys():
+                # Create a figure for this metric
+                plt.figure(figsize=(12, 8))
+                
+                # Extract data for each condition across timepoints
+                for condition in all_conditions:
+                    if condition in condition_timepoint_data:
+                        timepoints = []
+                        values = []
+                        
+                        for timepoint in all_timepoints:
+                            if timepoint in condition_timepoint_data[condition]:
+                                analysis = condition_timepoint_data[condition][timepoint][1]
+                                if metric_name in analysis['global']:
+                                    timepoints.append(timepoint)
+                                    values.append(analysis['global'][metric_name])
+                        
+                        if timepoints and values:
+                            plt.plot(timepoints, values, 'o-', linewidth=2, markersize=8, label=condition)
+                
+                plt.title(f"Changes in {metric_name} Over Time", fontsize=16)
+                plt.xlabel("Timepoint", fontsize=14)
+                plt.ylabel(metric_name, fontsize=14)
+                plt.legend(fontsize=12)
+                plt.grid(True, linestyle='--', alpha=0.7)
+                
+                # Save the figure
+                plt.savefig(os.path.join(timeseries_dir, f"timeseries_{metric_name}.png"), dpi=300, bbox_inches='tight')
+                plt.close()
+                
+                # Additionally, create a heatmap for condition x timepoint
+                data = {}
+                for condition in all_conditions:
+                    if condition in condition_timepoint_data:
+                        condition_values = []
+                        for timepoint in all_timepoints:
+                            if timepoint in condition_timepoint_data[condition]:
+                                analysis = condition_timepoint_data[condition][timepoint][1]
+                                if metric_name in analysis['global']:
+                                    condition_values.append(analysis['global'][metric_name])
+                            else:
+                                condition_values.append(float('nan'))  # Use NaN for missing data
+                        data[condition] = condition_values
+                
+                if data:
+                    heatmap_df = pd.DataFrame(data, index=all_timepoints)
+                    plt.figure(figsize=(10, 8))
+                    sns.heatmap(heatmap_df, annot=True, cmap="YlGnBu", linewidths=.5, fmt=".3f")
+                    plt.title(f"Heatmap of {metric_name} (Condition × Timepoint)", fontsize=16)
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(timeseries_dir, f"heatmap_{metric_name}.png"), dpi=300, bbox_inches='tight')
+                    plt.close()
+        
+        elif metric_type == "Nodal":
+            # For each electrode, create figures showing in-strength, out-strength, and causal flow over time
+            all_electrodes = set()
+            
+            # Get all electrodes from all analyses
+            for condition in condition_timepoint_data:
+                for timepoint in condition_timepoint_data[condition]:
+                    analysis = condition_timepoint_data[condition][timepoint][1]
+                    all_electrodes.update(analysis['nodal'].keys())
+            
+            for electrode in sorted(all_electrodes):
+                # Create a separate directory for each electrode
+                electrode_dir = os.path.join(timeseries_dir, f"electrode_{electrode}")
+                os.makedirs(electrode_dir, exist_ok=True)
+                
+                for metric_name in ['in_strength', 'out_strength', 'causal_flow']:
+                    # Create a figure for this electrode and metric
+                    plt.figure(figsize=(12, 8))
+                    
+                    # Extract data for each condition across timepoints
+                    for condition in all_conditions:
+                        if condition in condition_timepoint_data:
+                            timepoints = []
+                            values = []
+                            
+                            for timepoint in all_timepoints:
+                                if timepoint in condition_timepoint_data[condition]:
+                                    analysis = condition_timepoint_data[condition][timepoint][1]
+                                    if electrode in analysis['nodal'] and metric_name in analysis['nodal'][electrode]:
+                                        timepoints.append(timepoint)
+                                        values.append(analysis['nodal'][electrode][metric_name])
+                            
+                            if timepoints and values:
+                                plt.plot(timepoints, values, 'o-', linewidth=2, markersize=8, label=condition)
+                    
+                    plt.title(f"Changes in {electrode} {metric_name} Over Time", fontsize=16)
+                    plt.xlabel("Timepoint", fontsize=14)
+                    plt.ylabel(metric_name, fontsize=14)
+                    plt.legend(fontsize=12)
+                    plt.grid(True, linestyle='--', alpha=0.7)
+                    
+                    # Save the figure
+                    plt.savefig(os.path.join(electrode_dir, f"{electrode}_{metric_name}.png"), dpi=300, bbox_inches='tight')
+                    plt.close()
+                    
+                    # Create a heatmap for condition x timepoint
+                    data = {}
+                    for condition in all_conditions:
+                        if condition in condition_timepoint_data:
+                            condition_values = []
+                            for timepoint in all_timepoints:
+                                if timepoint in condition_timepoint_data[condition] and electrode in condition_timepoint_data[condition][timepoint][1]['nodal']:
+                                    analysis = condition_timepoint_data[condition][timepoint][1]
+                                    if metric_name in analysis['nodal'][electrode]:
+                                        condition_values.append(analysis['nodal'][electrode][metric_name])
+                                else:
+                                    condition_values.append(float('nan'))  # Use NaN for missing data
+                            data[condition] = condition_values
+                    
+                    if data:
+                        heatmap_df = pd.DataFrame(data, index=all_timepoints)
+                        plt.figure(figsize=(10, 8))
+                        sns.heatmap(heatmap_df, annot=True, cmap="YlGnBu", linewidths=.5, fmt=".3f")
+                        plt.title(f"Heatmap of {electrode} {metric_name} (Condition × Timepoint)", fontsize=16)
+                        plt.tight_layout()
+                        plt.savefig(os.path.join(electrode_dir, f"heatmap_{electrode}_{metric_name}.png"), dpi=300, bbox_inches='tight')
+                        plt.close()
+                
+                # Create a composite figure showing all three metrics for this electrode
+                fig, axes = plt.subplots(3, 1, figsize=(12, 18), sharex=True)
+                metric_names = ['in_strength', 'out_strength', 'causal_flow']
+                
+                for i, metric_name in enumerate(metric_names):
+                    ax = axes[i]
+                    for condition in all_conditions:
+                        if condition in condition_timepoint_data:
+                            timepoints = []
+                            values = []
+                            
+                            for timepoint in all_timepoints:
+                                if timepoint in condition_timepoint_data[condition]:
+                                    analysis = condition_timepoint_data[condition][timepoint][1]
+                                    if electrode in analysis['nodal'] and metric_name in analysis['nodal'][electrode]:
+                                        timepoints.append(timepoint)
+                                        values.append(analysis['nodal'][electrode][metric_name])
+                            
+                            if timepoints and values:
+                                ax.plot(timepoints, values, 'o-', linewidth=2, markersize=8, label=condition)
+                    
+                    ax.set_title(f"{electrode} {metric_name}", fontsize=14)
+                    ax.set_ylabel(metric_name, fontsize=12)
+                    ax.grid(True, linestyle='--', alpha=0.7)
+                    
+                    if i == 0:
+                        ax.legend(fontsize=12)
+                
+                axes[-1].set_xlabel("Timepoint", fontsize=14)
+                fig.suptitle(f"All Metrics for Electrode {electrode}", fontsize=18)
+                plt.tight_layout(rect=[0, 0, 1, 0.97])
+                plt.savefig(os.path.join(electrode_dir, f"{electrode}_all_metrics.png"), dpi=300, bbox_inches='tight')
+                plt.close()
+        
+        elif metric_type in ["Network", "Matrix"]:
+            # For network and matrix, we'll create a grid of visualizations for each condition at each timepoint
+            for condition in all_conditions:
+                if condition in condition_timepoint_data:
+                    # Create a condition directory
+                    condition_dir = os.path.join(timeseries_dir, f"condition_{condition}")
+                    os.makedirs(condition_dir, exist_ok=True)
+                    
+                    for timepoint in all_timepoints:
+                        if timepoint in condition_timepoint_data[condition]:
+                            key, analysis = condition_timepoint_data[condition][timepoint]
+                            title = f"{condition}, {timepoint}"
+                            base_name = f"condition_{condition}_timepoint_{timepoint}"
+                            
+                            if metric_type == "Network":
+                                G = self.analyzer.create_network_graph(key)
+                                plot_network_graph(
+                                    G, 
+                                    title, 
+                                    os.path.join(condition_dir, f"{base_name}_network.png")
+                                )
+                            
+                            elif metric_type == "Matrix":
+                                plot_connectivity_matrix(
+                                    analysis['connectivity_matrix'], 
+                                    title, 
+                                    os.path.join(condition_dir, f"{base_name}_matrix.png")
+                                )
+            
+            # Also create a visual comparison grid
+            if metric_type == "Matrix":
+                # Create a multi-panel figure showing all matrices
+                n_conditions = len(all_conditions)
+                n_timepoints = len(all_timepoints)
+                
+                # Determine grid dimensions
+                grid_size = (n_conditions, n_timepoints)
+                
+                # Create the figure
+                if n_conditions > 0 and n_timepoints > 0:
+                    fig, axes = plt.subplots(n_conditions, n_timepoints, 
+                                            figsize=(n_timepoints*4, n_conditions*4),
+                                            squeeze=False)
+                    
+                    # Plot each matrix
+                    for i, condition in enumerate(sorted(all_conditions)):
+                        for j, timepoint in enumerate(sorted(all_timepoints)):
+                            ax = axes[i, j]
+                            
+                            if condition in condition_timepoint_data and timepoint in condition_timepoint_data[condition]:
+                                key, analysis = condition_timepoint_data[condition][timepoint]
+                                matrix = analysis['connectivity_matrix']
+                                
+                                # Plot the matrix as a heatmap
+                                sns.heatmap(matrix, ax=ax, cmap="YlGnBu", vmin=0, 
+                                          cbar=True if j == n_timepoints-1 else False)
+                                
+                                ax.set_title(f"{condition}, {timepoint}")
+                            else:
+                                ax.set_visible(False)
+                    
+                    plt.tight_layout()
+                    plt.savefig(os.path.join(timeseries_dir, "matrix_grid_comparison.png"), dpi=300, bbox_inches='tight')
+                    plt.close()
+        
+        elif metric_type == "Pairwise":
+            # For pairwise, we'll focus on top connections and how they change over time
+            # First, identify top connections across all analyses
+            all_pairs = set()
+            pair_values = {}
+            
+            for condition in condition_timepoint_data:
+                for timepoint in condition_timepoint_data[condition]:
+                    analysis = condition_timepoint_data[condition][timepoint][1]
+                    for pair, value in analysis['pairwise']['directional_pairs'].items():
+                        all_pairs.add(pair)
+                        if pair not in pair_values:
+                            pair_values[pair] = []
+                        pair_values[pair].append(value)
+            
+            # Sort pairs by average value and select top 15
+            top_pairs = sorted(all_pairs, key=lambda p: np.mean(pair_values.get(p, [0])), reverse=True)[:15]
+            
+            # Create a directory for pairwise plots
+            pairwise_dir = os.path.join(timeseries_dir, "pairwise")
+            os.makedirs(pairwise_dir, exist_ok=True)
+            
+            for pair in top_pairs:
+                # Create a figure for this pair
+                plt.figure(figsize=(12, 8))
+                
+                # Extract data for each condition across timepoints
+                for condition in all_conditions:
+                    if condition in condition_timepoint_data:
+                        timepoints = []
+                        values = []
+                        
+                        for timepoint in all_timepoints:
+                            if timepoint in condition_timepoint_data[condition]:
+                                analysis = condition_timepoint_data[condition][timepoint][1]
+                                if pair in analysis['pairwise']['directional_pairs']:
+                                    timepoints.append(timepoint)
+                                    values.append(analysis['pairwise']['directional_pairs'][pair])
+                        
+                        if timepoints and values:
+                            plt.plot(timepoints, values, 'o-', linewidth=2, markersize=8, label=condition)
+                
+                plt.title(f"Changes in Connection {pair} Over Time", fontsize=16)
+                plt.xlabel("Timepoint", fontsize=14)
+                plt.ylabel("Granger Causality Value", fontsize=14)
+                plt.legend(fontsize=12)
+                plt.grid(True, linestyle='--', alpha=0.7)
+                
+                # Save the figure
+                plt.savefig(os.path.join(pairwise_dir, f"{pair.replace('→','_to_')}.png"), dpi=300, bbox_inches='tight')
+                plt.close()
+            
+            # Create a heatmap of top pairs across conditions and timepoints
+            for condition in all_conditions:
+                if condition in condition_timepoint_data:
+                    # Create a matrix of timepoints x pairs
+                    data = []
+                    for timepoint in all_timepoints:
+                        if timepoint in condition_timepoint_data[condition]:
+                            row = {}
+                            analysis = condition_timepoint_data[condition][timepoint][1]
+                            for pair in top_pairs:
+                                if pair in analysis['pairwise']['directional_pairs']:
+                                    row[pair] = analysis['pairwise']['directional_pairs'][pair]
+                                else:
+                                    row[pair] = 0
+                            data.append(row)
+                        else:
+                            row = {pair: 0 for pair in top_pairs}
+                            data.append(row)
+                    
+                    if data:
+                        df = pd.DataFrame(data, index=all_timepoints)
+                        plt.figure(figsize=(16, 10))
+                        sns.heatmap(df, annot=True, cmap="YlGnBu", linewidths=.5, fmt=".3f")
+                        plt.title(f"Top GC Connections for Condition: {condition}", fontsize=16)
+                        plt.tick_params(axis='x', rotation=45)
+                        plt.tight_layout()
+                        plt.savefig(os.path.join(pairwise_dir, f"heatmap_{condition}.png"), dpi=300, bbox_inches='tight')
+                        plt.close()
+            
+            # Create a composite figure with all top pairs for each condition
+            for condition in all_conditions:
+                if condition in condition_timepoint_data:
+                    n_pairs = min(len(top_pairs), 6)  # Show top 6 pairs at most
+                    if n_pairs > 0:
+                        n_rows = (n_pairs + 1) // 2  # 2 columns per row
+                        fig, axes = plt.subplots(n_rows, 2, figsize=(16, n_rows*5), squeeze=False)
+                        
+                        for i, pair in enumerate(top_pairs[:n_pairs]):
+                            row, col = i // 2, i % 2
+                            ax = axes[row, col]
+                            
+                            timepoints = []
+                            values = []
+                            
+                            for timepoint in all_timepoints:
+                                if timepoint in condition_timepoint_data[condition]:
+                                    analysis = condition_timepoint_data[condition][timepoint][1]
+                                    if pair in analysis['pairwise']['directional_pairs']:
+                                        timepoints.append(timepoint)
+                                        values.append(analysis['pairwise']['directional_pairs'][pair])
+                            
+                            if timepoints and values:
+                                ax.plot(timepoints, values, 'o-', linewidth=2, markersize=8, color='blue')
+                                ax.set_title(f"Connection: {pair}", fontsize=14)
+                                ax.set_xlabel("Timepoint", fontsize=12)
+                                ax.set_ylabel("GC Value", fontsize=12)
+                                ax.grid(True, linestyle='--', alpha=0.7)
+                        
+                        # Hide any unused subplots
+                        for i in range(n_pairs, n_rows*2):
+                            row, col = i // 2, i % 2
+                            axes[row, col].set_visible(False)
+                            
+                        plt.tight_layout()
+                        plt.savefig(os.path.join(pairwise_dir, f"top_pairs_{condition}.png"), dpi=300, bbox_inches='tight')
+                        plt.close()
+
+    def _combine_global_metrics(self, analyses):
+        """Combine global metrics from multiple analyses"""
+        combined = {}
+        
+        # Get all metric names
+        metric_names = set()
+        for analysis in analyses:
+            metric_names.update(analysis['global'].keys())
+        
+        # Compute mean for each metric
+        for metric in metric_names:
+            values = [analysis['global'][metric] for analysis in analyses if metric in analysis['global']]
+            if values:
+                combined[metric] = sum(values) / len(values)
+        
+        return combined
+
+    def _combine_nodal_metrics(self, analyses):
+        """Combine nodal metrics from multiple analyses"""
+        combined = {}
+        
+        # Get all electrodes
+        all_electrodes = set()
+        for analysis in analyses:
+            all_electrodes.update(analysis['nodal'].keys())
+        
+        # Compute mean metrics for each electrode
+        for electrode in all_electrodes:
+            combined[electrode] = {}
+            
+            # Get all analyses that have this electrode
+            electrode_analyses = [a for a in analyses if electrode in a['nodal']]
+            
+            if electrode_analyses:
+                # Get the metric names from the first analysis
+                metric_names = [m for m in electrode_analyses[0]['nodal'][electrode].keys() if m != 'category']
+                
+                for metric in metric_names:
+                    values = [a['nodal'][electrode][metric] for a in electrode_analyses if metric in a['nodal'][electrode]]
+                    if values:
+                        combined[electrode][metric] = sum(values) / len(values)
+                
+                # Determine dominant category
+                categories = [a['nodal'][electrode]['category'] for a in electrode_analyses if 'category' in a['nodal'][electrode]]
+                if categories:
+                    combined[electrode]['category'] = max(set(categories), key=categories.count)
+        
+        return combined
+
+    def _combine_pairwise_metrics(self, analyses):
+        """Combine pairwise metrics from multiple analyses"""
+        combined_pairs = {}
+        
+        # Get all pairs
+        all_pairs = set()
+        for analysis in analyses:
+            all_pairs.update(analysis['pairwise']['directional_pairs'].keys())
+        
+        # Compute mean for each pair
+        for pair in all_pairs:
+            values = [analysis['pairwise']['directional_pairs'][pair] 
+                     for analysis in analyses 
+                     if pair in analysis['pairwise']['directional_pairs']]
+            
+            if values:
+                combined_pairs[pair] = sum(values) / len(values)
+        
+        return {'directional_pairs': combined_pairs}
+
+    def _combine_connectivity_matrices(self, analyses):
+        """Combine connectivity matrices from multiple analyses"""
+        # Get all electrodes
+        all_electrodes = set()
+        for analysis in analyses:
+            matrix = analysis['connectivity_matrix']
+            all_electrodes.update(matrix.index)
+        
+        all_electrodes = sorted(all_electrodes)
+        
+        # Create an empty matrix with all electrodes
+        combined_matrix = pd.DataFrame(0, index=all_electrodes, columns=all_electrodes)
+        
+        # Fill the matrix by averaging values
+        for source in all_electrodes:
+            for target in all_electrodes:
+                values = []
+                
+                for analysis in analyses:
+                    matrix = analysis['connectivity_matrix']
+                    if source in matrix.index and target in matrix.columns:
+                        values.append(matrix.loc[source, target])
+                
+                if values:
+                    combined_matrix.loc[source, target] = sum(values) / len(values)
+        
+        return combined_matrix
     
     def export_visualizations(self):
         """Export visualizations to files"""
@@ -1179,11 +1836,98 @@ class GrangerAnalysisGUI:
         if not confirmed:
             return
         
-        # TODO: Implement outlier removal from the dataset
-        # This is more complex as it requires modifying the original data in the analyzer
-        # For now, just show a message
-        messagebox.showinfo("Not Implemented", "Outlier removal is not yet implemented. This would require modifying the original dataset.")
-    
+        # Get current metric type and variable
+        metric_type = self.outlier_metric_type.get()
+        variable = self.outlier_variable.get()
+        
+        # Get the participant, condition, timepoint information for the selected outliers
+        outliers_to_remove = []
+        for item_id in selected_items:
+            values = self.outlier_tree.item(item_id, 'values')
+            # Get the first three columns: Participant, Condition, Timepoint
+            participant = values[0]
+            condition = values[1]
+            timepoint = values[2]
+            value = values[3]
+            
+            if participant and condition and timepoint:
+                outliers_to_remove.append((participant, condition, timepoint))
+        
+        # Remove the outliers from the analyses
+        removed_count = 0
+        
+        for key, analysis in list(self.analyzer.analyses.items()):
+            participant_id = analysis['metadata']['participant_id']
+            condition = analysis['metadata']['condition']
+            timepoint = analysis['metadata']['timepoint']
+            
+            # Check if this analysis is in the list of outliers to remove
+            if (participant_id, condition, timepoint) in outliers_to_remove:
+                # Handle different metric types
+                if metric_type == 'Global':
+                    # For global metrics, we need to replace the outlier value with the mean
+                    # First, collect all non-outlier values for this metric
+                    all_values = []
+                    for _, other_analysis in self.analyzer.analyses.items():
+                        if variable in other_analysis['global'] and (other_analysis['metadata']['participant_id'], 
+                                other_analysis['metadata']['condition'], 
+                                other_analysis['metadata']['timepoint']) not in outliers_to_remove:
+                            all_values.append(other_analysis['global'][variable])
+                    
+                    # Calculate mean if we have enough values
+                    if all_values:
+                        mean_value = sum(all_values) / len(all_values)
+                        # Replace outlier value with mean
+                        self.analyzer.analyses[key]['global'][variable] = mean_value
+                        removed_count += 1
+                
+                elif metric_type == 'Nodal':
+                    # For nodal metrics, we need to find the specific electrode
+                    # This is more complex, as we need electrode information
+                    # For simplicity, we'll just set it to the mean of other participants
+                    for electrode in analysis['nodal']:
+                        if variable in analysis['nodal'][electrode]:
+                            # Collect all non-outlier values for this electrode and metric
+                            all_values = []
+                            for _, other_analysis in self.analyzer.analyses.items():
+                                if (other_analysis['metadata']['participant_id'], 
+                                        other_analysis['metadata']['condition'], 
+                                        other_analysis['metadata']['timepoint']) not in outliers_to_remove:
+                                    if electrode in other_analysis['nodal'] and variable in other_analysis['nodal'][electrode]:
+                                        all_values.append(other_analysis['nodal'][electrode][variable])
+                            
+                            # Calculate mean if we have enough values
+                            if all_values:
+                                mean_value = sum(all_values) / len(all_values)
+                                # Replace outlier value with mean
+                                self.analyzer.analyses[key]['nodal'][electrode][variable] = mean_value
+                                removed_count += 1
+                
+                elif metric_type == 'Pairwise':
+                    # For pairwise metrics, we need to find the specific pairs
+                    # This is handled similarly to nodal metrics
+                    for pair, val in list(analysis['pairwise']['directional_pairs'].items()):
+                        # Collect all non-outlier values for this pair
+                        all_values = []
+                        for _, other_analysis in self.analyzer.analyses.items():
+                            if (other_analysis['metadata']['participant_id'], 
+                                    other_analysis['metadata']['condition'], 
+                                    other_analysis['metadata']['timepoint']) not in outliers_to_remove:
+                                if pair in other_analysis['pairwise']['directional_pairs']:
+                                    all_values.append(other_analysis['pairwise']['directional_pairs'][pair])
+                        
+                        # Calculate mean if we have enough values
+                        if all_values:
+                            mean_value = sum(all_values) / len(all_values)
+                            # Replace outlier value with mean
+                            self.analyzer.analyses[key]['pairwise']['directional_pairs'][pair] = mean_value
+                            removed_count += 1
+        
+        # Refresh the outlier detection display
+        self._detect_outliers()
+        
+        messagebox.showinfo("Outliers Removed", f"Successfully replaced {removed_count} outlier values with mean values.")
+
     def _run_normality_test(self):
         """Run Shapiro-Wilk normality test on the selected variable"""
         # Get selected variable and grouping
@@ -1377,12 +2121,68 @@ class GrangerAnalysisGUI:
                     item_id = self.assumption_tree.insert('', 'end', values=values)
                     self.assumption_tree.item(item_id, tags=('failed',))
         
-        if run_sphericity and 'Participant' in df.columns and 'Timepoint' in df.columns:
-            # Mauchly's test for sphericity (for repeated measures)
-            # This is complex and requires a specific data structure
-            # For simplicity, we'll just note it's not implemented yet
-            values = ["Mauchly's Test (Sphericity)", "N/A", "Not implemented", "N/A"]
-            self.assumption_tree.insert('', 'end', values=values)
+        if run_sphericity and 'Participant' in df.columns and 'Timepoint' in df.columns and len(df['Timepoint'].unique()) > 1:
+            try:
+                # Prepare data for Mauchly's test (needs data in wide format)
+                # First check if we have enough timepoints (at least 3 for sphericity to be meaningful)
+                timepoints = sorted(df['Timepoint'].unique())
+                
+                if len(timepoints) < 3:
+                    values = ["Mauchly's Test (Sphericity)", "N/A", "Need at least 3 timepoints", "N/A"]
+                    self.assumption_tree.insert('', 'end', values=values)
+                else:
+                    # Convert to wide format (participant x timepoint)
+                    wide_df = df.pivot_table(
+                        index='Participant', 
+                        columns='Timepoint', 
+                        values='Value',
+                        aggfunc='mean'  # In case there are duplicates
+                    )
+                    
+                    # Check for missing values - sphericity test needs complete data
+                    if wide_df.isna().any().any():
+                        missing_count = wide_df.isna().sum().sum()
+                        values = ["Mauchly's Test (Sphericity)", "N/A", f"Missing data: {missing_count} values", "N/A"]
+                        self.assumption_tree.insert('', 'end', values=values)
+                    else:
+                        # Run Mauchly's test using pingouin
+                        result = pg.sphericity(wide_df, method='mauchly')
+                        
+                        # Add results to treeview
+                        w_stat = result.loc['sphericity', 'W']
+                        chi2 = result.loc['sphericity', 'chi2']
+                        dof = result.loc['sphericity', 'dof']
+                        p_val = result.loc['sphericity', 'pval']
+                        
+                        passed = p_val > 0.05
+                        
+                        values = [
+                            "Mauchly's Test (Sphericity)", 
+                            f"W={w_stat:.4f}, χ²={chi2:.4f}, df={dof}", 
+                            f"{p_val:.4f}", 
+                            "Yes" if passed else "No"
+                        ]
+                        item_id = self.assumption_tree.insert('', 'end', values=values)
+                        
+                        if not passed:
+                            self.assumption_tree.item(item_id, tags=('failed',))
+                        
+                        # Also add epsilon values (for correcting degrees of freedom if sphericity is violated)
+                        for method in ['greenhouse', 'huynh', 'box']:
+                            epsilon = float(result.loc[f'df_corr_{method}', 'W'])
+                            values = [
+                                f"Epsilon ({method.capitalize()})",
+                                f"{epsilon:.4f}",
+                                "Use to correct df when sphericity violated",
+                                "N/A"
+                            ]
+                            self.assumption_tree.insert('', 'end', values=values)
+            except Exception as e:
+                # Error running test
+                traceback.print_exc()
+                values = ["Mauchly's Test (Sphericity)", "Error", str(e), "No"]
+                item_id = self.assumption_tree.insert('', 'end', values=values)
+                self.assumption_tree.item(item_id, tags=('failed',))
         
         if run_heteroscedasticity:
             # Breusch-Pagan test for heteroscedasticity
@@ -1505,16 +2305,29 @@ class GrangerAnalysisGUI:
         # For factorial ANOVA
         if anova_type == 'factorial':
             try:
+                # Check if we have enough data for meaningful analysis
+                if len(df) < 4:
+                    messagebox.showwarning("Insufficient Data", "At least 4 data points required for ANOVA")
+                    return
+                    
+                # Make sure we have both factors if we want to test interaction
+                if include_interaction and (not include_condition or not include_timepoint):
+                    messagebox.showwarning("Invalid Selection", 
+                                         "To test interaction, both Condition and Timepoint factors must be selected")
+                    return
+                
                 # Prepare the formula based on selected factors
                 formula_parts = []
                 
-                if include_condition and 'Condition' in df.columns:
+                if include_condition and 'Condition' in df.columns and len(df['Condition'].unique()) > 1:
                     formula_parts.append('C(Condition)')
                 
-                if include_timepoint and 'Timepoint' in df.columns:
+                if include_timepoint and 'Timepoint' in df.columns and len(df['Timepoint'].unique()) > 1:
                     formula_parts.append('C(Timepoint)')
                 
-                if include_interaction and include_condition and include_timepoint and 'Condition' in df.columns and 'Timepoint' in df.columns:
+                if include_interaction and include_condition and include_timepoint and \
+                   'Condition' in df.columns and 'Timepoint' in df.columns and \
+                   len(df['Condition'].unique()) > 1 and len(df['Timepoint'].unique()) > 1:
                     formula_parts.append('C(Condition):C(Timepoint)')
                 
                 if not formula_parts:
@@ -1522,6 +2335,168 @@ class GrangerAnalysisGUI:
                     return
                 
                 formula = 'Value ~ ' + ' + '.join(formula_parts)
+                
+                # Print formula for debugging
+                print(f"ANOVA formula: {formula}")
+                print(f"Data shape: {df.shape}")
+                print(f"Data columns: {df.columns.tolist()}")
+                
+                # For nodal metrics, we may need to handle specific electrodes
+                if metric_type == 'Nodal' and 'Electrode' in df.columns:
+                    # Ask user if they want to analyze all electrodes or a specific one
+                    unique_electrodes = sorted(df['Electrode'].unique())
+                    
+                    # Create a dialog to select electrode
+                    electrode_dialog = tk.Toplevel(self.root)
+                    electrode_dialog.title("Select Electrode")
+                    electrode_dialog.geometry("400x300")
+                    electrode_dialog.transient(self.root)
+                    electrode_dialog.grab_set()
+                    
+                    ttk.Label(electrode_dialog, text="Choose Electrodes to Analyze:").pack(pady=10)
+                    
+                    # Create a frame for the listbox and scrollbar
+                    list_frame = ttk.Frame(electrode_dialog)
+                    list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+                    
+                    # Create scrollbar
+                    scrollbar = ttk.Scrollbar(list_frame)
+                    scrollbar.pack(side="right", fill="y")
+                    
+                    # Create listbox with multiple selection
+                    electrode_listbox = tk.Listbox(list_frame, selectmode="multiple", yscrollcommand=scrollbar.set)
+                    for electrode in unique_electrodes:
+                        electrode_listbox.insert(tk.END, electrode)
+                    electrode_listbox.pack(side="left", fill="both", expand=True)
+                    
+                    # Configure scrollbar
+                    scrollbar.config(command=electrode_listbox.yview)
+                    
+                    # Add "All Electrodes" and "Selected Electrodes" options
+                    option_frame = ttk.Frame(electrode_dialog)
+                    option_frame.pack(fill="x", padx=10, pady=5)
+                    
+                    electrode_option = tk.StringVar(value="all")
+                    ttk.Radiobutton(option_frame, text="All Electrodes (Average)", value="all", 
+                                  variable=electrode_option).pack(anchor="w")
+                    ttk.Radiobutton(option_frame, text="Selected Electrodes Only", value="selected", 
+                                  variable=electrode_option).pack(anchor="w")
+                    
+                    # Add buttons
+                    btn_frame = ttk.Frame(electrode_dialog)
+                    btn_frame.pack(fill="x", padx=10, pady=10)
+                    
+                    result = [None, []]
+                    
+                    def on_ok():
+                        selected_indices = electrode_listbox.curselection()
+                        selected_electrodes = [electrode_listbox.get(i) for i in selected_indices]
+                        result[0] = electrode_option.get()
+                        result[1] = selected_electrodes
+                        electrode_dialog.destroy()
+                    
+                    def on_cancel():
+                        electrode_dialog.destroy()
+                    
+                    ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="right", padx=5)
+                    ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right", padx=5)
+                    
+                    # Wait for dialog to close
+                    self.root.wait_window(electrode_dialog)
+                    
+                    if result[0] is None:
+                        return  # User canceled
+                    
+                    # Filter data based on selection
+                    if result[0] == "selected" and result[1]:
+                        df = df[df['Electrode'].isin(result[1])]
+                        
+                        if len(df) < 4:
+                            messagebox.showwarning("Insufficient Data", 
+                                                "Not enough data points for the selected electrodes")
+                            return
+                
+                # For pairwise metrics, we may need to handle specific pairs
+                if metric_type == 'Pairwise' and 'Pair' in df.columns:
+                    # Similar to electrode selection dialog
+                    unique_pairs = sorted(df['Pair'].unique())
+                    
+                    # Create a dialog to select pairs
+                    pair_dialog = tk.Toplevel(self.root)
+                    pair_dialog.title("Select Connection Pairs")
+                    pair_dialog.geometry("500x400")
+                    pair_dialog.transient(self.root)
+                    pair_dialog.grab_set()
+                    
+                    ttk.Label(pair_dialog, text="Choose Connection Pairs to Analyze:").pack(pady=10)
+                    
+                    # Create a frame for the listbox and scrollbar
+                    list_frame = ttk.Frame(pair_dialog)
+                    list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+                    
+                    # Create scrollbar
+                    scrollbar = ttk.Scrollbar(list_frame)
+                    scrollbar.pack(side="right", fill="y")
+                    
+                    # Create listbox with multiple selection
+                    pair_listbox = tk.Listbox(list_frame, selectmode="multiple", yscrollcommand=scrollbar.set)
+                    for pair in unique_pairs:
+                        pair_listbox.insert(tk.END, pair)
+                    pair_listbox.pack(side="left", fill="both", expand=True)
+                    
+                    # Configure scrollbar
+                    scrollbar.config(command=pair_listbox.yview)
+                    
+                    # Add "All Pairs" and "Selected Pairs" options
+                    option_frame = ttk.Frame(pair_dialog)
+                    option_frame.pack(fill="x", padx=10, pady=5)
+                    
+                    pair_option = tk.StringVar(value="all")
+                    ttk.Radiobutton(option_frame, text="All Connection Pairs (Average)", value="all", 
+                                  variable=pair_option).pack(anchor="w")
+                    ttk.Radiobutton(option_frame, text="Selected Connection Pairs Only", value="selected", 
+                                  variable=pair_option).pack(anchor="w")
+                    ttk.Radiobutton(option_frame, text="Top 10 Strongest Connections", value="top10", 
+                                  variable=pair_option).pack(anchor="w")
+                    
+                    # Add buttons
+                    btn_frame = ttk.Frame(pair_dialog)
+                    btn_frame.pack(fill="x", padx=10, pady=10)
+                    
+                    result = [None, []]
+                    
+                    def on_ok():
+                        selected_indices = pair_listbox.curselection()
+                        selected_pairs = [pair_listbox.get(i) for i in selected_indices]
+                        result[0] = pair_option.get()
+                        result[1] = selected_pairs
+                        pair_dialog.destroy()
+                    
+                    def on_cancel():
+                        pair_dialog.destroy()
+                    
+                    ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="right", padx=5)
+                    ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right", padx=5)
+                    
+                    # Wait for dialog to close
+                    self.root.wait_window(pair_dialog)
+                    
+                    if result[0] is None:
+                        return  # User canceled
+                    
+                    # Filter data based on selection
+                    if result[0] == "selected" and result[1]:
+                        df = df[df['Pair'].isin(result[1])]
+                    elif result[0] == "top10":
+                        # Get the top 10 pairs by average value
+                        pair_means = df.groupby('Pair')['Value'].mean().reset_index()
+                        top_pairs = pair_means.nlargest(10, 'Value')['Pair'].tolist()
+                        df = df[df['Pair'].isin(top_pairs)]
+                        
+                    if len(df) < 4:
+                        messagebox.showwarning("Insufficient Data", 
+                                            "Not enough data points for the selected pairs")
+                        return
                 
                 # Fit the model
                 model = ols(formula, data=df).fit()
@@ -1597,17 +2572,296 @@ class GrangerAnalysisGUI:
                 # Configure the tag
                 self.anova_tree.tag_configure('significant', background='#ccffcc')
                 
-                # Show message
-                messagebox.showinfo("ANOVA Complete", "Factorial ANOVA completed successfully.")
+                # Show message about which data was analyzed
+                if metric_type == 'Nodal':
+                    if 'Electrode' in df.columns:
+                        if result and result[0] == 'selected':
+                            messagebox.showinfo("ANOVA Complete", 
+                                             f"Factorial ANOVA completed for {variable} on {len(result[1])} electrodes: {', '.join(result[1])}")
+                        else:
+                            messagebox.showinfo("ANOVA Complete", 
+                                             f"Factorial ANOVA completed for {variable} across all electrodes")
+                elif metric_type == 'Pairwise':
+                    if 'Pair' in df.columns:
+                        if result and result[0] == 'selected':
+                            messagebox.showinfo("ANOVA Complete", 
+                                             f"Factorial ANOVA completed for {len(result[1])} connection pairs")
+                        elif result and result[0] == 'top10':
+                            messagebox.showinfo("ANOVA Complete", 
+                                             f"Factorial ANOVA completed for top 10 strongest connection pairs")
+                        else:
+                            messagebox.showinfo("ANOVA Complete", 
+                                             f"Factorial ANOVA completed for all connection pairs")
+                else:
+                    messagebox.showinfo("ANOVA Complete", "Factorial ANOVA completed successfully.")
                 
             except Exception as e:
+                print(f"ANOVA Error: {str(e)}")
+                traceback.print_exc()
                 messagebox.showerror("ANOVA Error", f"Error running ANOVA: {str(e)}")
         
         elif anova_type == 'repeated' or anova_type == 'mixed':
-            # These are more complex and require specific data structure
-            messagebox.showinfo("Not Implemented", 
-                              f"{anova_type.capitalize()} Measures ANOVA is not yet implemented. "
-                              "This requires a specialized analysis approach.")
+            # These are more complex, but we can implement them using pingouin
+            try:
+                # Check if we have the required factors and enough data
+                if not include_timepoint or 'Timepoint' not in df.columns or len(df['Timepoint'].unique()) < 2:
+                    messagebox.showwarning("Invalid Selection", 
+                                        "Repeated measures and mixed ANOVA require 'Timepoint' factor with at least 2 levels")
+                    return
+                
+                if 'Participant' not in df.columns or len(df['Participant'].unique()) < 2:
+                    messagebox.showwarning("Insufficient Data", 
+                                        "Repeated measures and mixed ANOVA require multiple participants")
+                    return
+                
+                # For mixed ANOVA, we also need a between-subjects factor (Condition)
+                if anova_type == 'mixed' and (not include_condition or 'Condition' not in df.columns or len(df['Condition'].unique()) < 2):
+                    messagebox.showwarning("Invalid Selection", 
+                                        "Mixed ANOVA requires 'Condition' factor with at least 2 levels")
+                    return
+                
+                # Check for balanced design (pingouin's mixed_anova requires it)
+                # Each participant should have data for all timepoints
+                pivot_data = df.pivot_table(
+                    index=['Participant', 'Condition'] if anova_type == 'mixed' else 'Participant',
+                    columns='Timepoint',
+                    values='Value',
+                    aggfunc='mean'
+                )
+                
+                if pivot_data.isna().any().any():
+                    missing_count = pivot_data.isna().sum().sum()
+                    messagebox.showwarning("Missing Data", 
+                                        f"Design is not balanced. There are {missing_count} missing values.\n\n"
+                                        "Repeated measures and mixed ANOVA require that each participant has data for all timepoints.")
+                    return
+                
+                # For nodal metrics, we need to select specific electrodes
+                if metric_type == 'Nodal' and 'Electrode' in df.columns:
+                    unique_electrodes = sorted(df['Electrode'].unique())
+                    
+                    # Create a dialog to select electrode
+                    electrode_dialog = tk.Toplevel(self.root)
+                    electrode_dialog.title("Select Electrode")
+                    electrode_dialog.geometry("400x300")
+                    electrode_dialog.transient(self.root)
+                    electrode_dialog.grab_set()
+                    
+                    ttk.Label(electrode_dialog, text="Choose an Electrode to Analyze:").pack(pady=10)
+                    
+                    # Create a frame for the listbox and scrollbar
+                    list_frame = ttk.Frame(electrode_dialog)
+                    list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+                    
+                    # Create scrollbar
+                    scrollbar = ttk.Scrollbar(list_frame)
+                    scrollbar.pack(side="right", fill="y")
+                    
+                    # Create listbox with single selection for RM ANOVA
+                    electrode_listbox = tk.Listbox(list_frame, selectmode="single", yscrollcommand=scrollbar.set)
+                    for electrode in unique_electrodes:
+                        electrode_listbox.insert(tk.END, electrode)
+                    electrode_listbox.pack(side="left", fill="both", expand=True)
+                    
+                    # Configure scrollbar
+                    scrollbar.config(command=electrode_listbox.yview)
+                    
+                    # Add buttons
+                    btn_frame = ttk.Frame(electrode_dialog)
+                    btn_frame.pack(fill="x", padx=10, pady=10)
+                    
+                    selected_electrode = [None]
+                    
+                    def on_ok():
+                        selected_indices = electrode_listbox.curselection()
+                        if selected_indices:
+                            selected_electrode[0] = electrode_listbox.get(selected_indices[0])
+                        electrode_dialog.destroy()
+                    
+                    def on_cancel():
+                        electrode_dialog.destroy()
+                    
+                    ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="right", padx=5)
+                    ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right", padx=5)
+                    
+                    # Wait for dialog to close
+                    self.root.wait_window(electrode_dialog)
+                    
+                    if selected_electrode[0] is None:
+                        return  # User canceled
+                    
+                    # Filter data for selected electrode
+                    df = df[df['Electrode'] == selected_electrode[0]]
+                    
+                    if df.empty:
+                        messagebox.showwarning("No Data", f"No data for electrode {selected_electrode[0]}")
+                        return
+                
+                # For pairwise metrics, we need to select a specific pair
+                if metric_type == 'Pairwise' and 'Pair' in df.columns:
+                    unique_pairs = sorted(df['Pair'].unique())
+                    
+                    # Create a dialog to select pairs
+                    pair_dialog = tk.Toplevel(self.root)
+                    pair_dialog.title("Select Connection Pair")
+                    pair_dialog.geometry("500x400")
+                    pair_dialog.transient(self.root)
+                    pair_dialog.grab_set()
+                    
+                    ttk.Label(pair_dialog, text="Choose a Connection Pair to Analyze:").pack(pady=10)
+                    
+                    # Create a frame for the listbox and scrollbar
+                    list_frame = ttk.Frame(pair_dialog)
+                    list_frame.pack(fill="both", expand=True, padx=10, pady=5)
+                    
+                    # Create scrollbar
+                    scrollbar = ttk.Scrollbar(list_frame)
+                    scrollbar.pack(side="right", fill="y")
+                    
+                    # Create listbox with single selection for RM ANOVA
+                    pair_listbox = tk.Listbox(list_frame, selectmode="single", yscrollcommand=scrollbar.set)
+                    for pair in unique_pairs:
+                        pair_listbox.insert(tk.END, pair)
+                    pair_listbox.pack(side="left", fill="both", expand=True)
+                    
+                    # Configure scrollbar
+                    scrollbar.config(command=pair_listbox.yview)
+                    
+                    # Add buttons
+                    btn_frame = ttk.Frame(pair_dialog)
+                    btn_frame.pack(fill="x", padx=10, pady=10)
+                    
+                    selected_pair = [None]
+                    
+                    def on_ok():
+                        selected_indices = pair_listbox.curselection()
+                        if selected_indices:
+                            selected_pair[0] = pair_listbox.get(selected_indices[0])
+                        pair_dialog.destroy()
+                    
+                    def on_cancel():
+                        pair_dialog.destroy()
+                    
+                    ttk.Button(btn_frame, text="OK", command=on_ok).pack(side="right", padx=5)
+                    ttk.Button(btn_frame, text="Cancel", command=on_cancel).pack(side="right", padx=5)
+                    
+                    # Wait for dialog to close
+                    self.root.wait_window(pair_dialog)
+                    
+                    if selected_pair[0] is None:
+                        return  # User canceled
+                    
+                    # Filter data for selected pair
+                    df = df[df['Pair'] == selected_pair[0]]
+                    
+                    if df.empty:
+                        messagebox.showwarning("No Data", f"No data for pair {selected_pair[0]}")
+                        return
+                
+                # Run the appropriate analysis
+                if anova_type == 'repeated':
+                    # Repeated measures ANOVA using pingouin
+                    result = pg.rm_anova(
+                        data=df,
+                        dv='Value',  # Dependent variable
+                        within='Timepoint',  # Within-subjects factor
+                        subject='Participant',  # Subject identifier
+                        detailed=True  # Get detailed output
+                    )
+                    
+                    # Add results to treeview
+                    for idx, row in result.iterrows():
+                        factor = row['Source']
+                        
+                        # Calculate partial eta squared (included in detailed output)
+                        partial_eta_sq = row['np2']
+                        
+                        # Add to treeview
+                        values = [
+                            factor, 
+                            f"{row['SS']:.4f}", 
+                            f"{row['ddof1']:.0f}", 
+                            f"{row['MS']:.4f}",
+                            f"{row['F']:.4f}", 
+                            f"{row['p-unc']:.4f}", 
+                            f"{partial_eta_sq:.4f}",
+                            "N/A"  # Pingouin doesn't calculate observed power
+                        ]
+                        
+                        item_id = self.anova_tree.insert('', 'end', values=values)
+                        
+                        # Color significant results
+                        if row['p-unc'] < 0.05:
+                            self.anova_tree.item(item_id, tags=('significant',))
+                    
+                    # Configure the tag
+                    self.anova_tree.tag_configure('significant', background='#ccffcc')
+                    
+                    # Show message
+                    if metric_type == 'Nodal':
+                        messagebox.showinfo("ANOVA Complete", 
+                                         f"Repeated Measures ANOVA completed for electrode {selected_electrode[0]}")
+                    elif metric_type == 'Pairwise':
+                        messagebox.showinfo("ANOVA Complete", 
+                                         f"Repeated Measures ANOVA completed for connection pair {selected_pair[0]}")
+                    else:
+                        messagebox.showinfo("ANOVA Complete", 
+                                         "Repeated Measures ANOVA completed successfully")
+                    
+                elif anova_type == 'mixed':
+                    # Mixed ANOVA using pingouin
+                    result = pg.mixed_anova(
+                        data=df,
+                        dv='Value',  # Dependent variable
+                        between='Condition',  # Between-subjects factor
+                        within='Timepoint',  # Within-subjects factor
+                        subject='Participant',  # Subject identifier
+                        detailed=True  # Get detailed output
+                    )
+                    
+                    # Add results to treeview
+                    for idx, row in result.iterrows():
+                        factor = row['Source']
+                        
+                        # Calculate partial eta squared (included in detailed output)
+                        partial_eta_sq = row['np2']
+                        
+                        # Add to treeview
+                        values = [
+                            factor, 
+                            f"{row['SS']:.4f}", 
+                            f"{row['DF1']:.0f}", 
+                            f"{row['MS']:.4f}",
+                            f"{row['F']:.4f}", 
+                            f"{row['p-unc']:.4f}", 
+                            f"{partial_eta_sq:.4f}",
+                            "N/A"  # Pingouin doesn't calculate observed power
+                        ]
+                        
+                        item_id = self.anova_tree.insert('', 'end', values=values)
+                        
+                        # Color significant results
+                        if row['p-unc'] < 0.05:
+                            self.anova_tree.item(item_id, tags=('significant',))
+                    
+                    # Configure the tag
+                    self.anova_tree.tag_configure('significant', background='#ccffcc')
+                    
+                    # Show message
+                    if metric_type == 'Nodal':
+                        messagebox.showinfo("ANOVA Complete", 
+                                         f"Mixed ANOVA completed for electrode {selected_electrode[0]}")
+                    elif metric_type == 'Pairwise':
+                        messagebox.showinfo("ANOVA Complete", 
+                                         f"Mixed ANOVA completed for connection pair {selected_pair[0]}")
+                    else:
+                        messagebox.showinfo("ANOVA Complete", 
+                                         "Mixed ANOVA completed successfully")
+                
+            except Exception as e:
+                print(f"Repeated/Mixed ANOVA Error: {str(e)}")
+                traceback.print_exc()
+                messagebox.showerror("ANOVA Error", f"Error running {anova_type.capitalize()} ANOVA: {str(e)}")
     
     def _export_anova_results(self):
         """Export ANOVA results to a CSV file"""
