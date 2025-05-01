@@ -2774,7 +2774,23 @@ class GrangerAnalysisGUI:
                         factor = row['Source']
                         
                         # Calculate partial eta squared (included in detailed output)
-                        partial_eta_sq = row['np2']
+                        # Handle different versions of pingouin that might use different column names
+                        if 'np2' in row:
+                            partial_eta_sq = row['np2']
+                        elif 'eta2_partial' in row:
+                            partial_eta_sq = row['eta2_partial']
+                        elif 'n2' in row:
+                            partial_eta_sq = row['n2']
+                        elif 'eta2' in row:
+                            partial_eta_sq = row['eta2']
+                        else:
+                            # Calculate manually if not available
+                            if 'SS' in row and 'SS_error' in result.columns:
+                                ss_effect = row['SS']
+                                ss_error = result.loc[idx, 'SS_error'] if idx in result.index else sum(result['SS_error'])
+                                partial_eta_sq = ss_effect / (ss_effect + ss_error) if (ss_effect + ss_error) > 0 else 0
+                            else:
+                                partial_eta_sq = float('nan')  # Not available
                         
                         # Add to treeview
                         values = [
@@ -2824,13 +2840,29 @@ class GrangerAnalysisGUI:
                         factor = row['Source']
                         
                         # Calculate partial eta squared (included in detailed output)
-                        partial_eta_sq = row['np2']
+                        # Handle different versions of pingouin that might use different column names
+                        if 'np2' in row:
+                            partial_eta_sq = row['np2']
+                        elif 'eta2_partial' in row:
+                            partial_eta_sq = row['eta2_partial']
+                        elif 'n2' in row:
+                            partial_eta_sq = row['n2']
+                        elif 'eta2' in row:
+                            partial_eta_sq = row['eta2']
+                        else:
+                            # Calculate manually if not available
+                            if 'SS' in row and 'SS_error' in result.columns:
+                                ss_effect = row['SS']
+                                ss_error = result.loc[idx, 'SS_error'] if idx in result.index else sum(result['SS_error']) if 'SS_error' in result.columns else 0
+                                partial_eta_sq = ss_effect / (ss_effect + ss_error) if (ss_effect + ss_error) > 0 else 0
+                            else:
+                                partial_eta_sq = float('nan')  # Not available
                         
                         # Add to treeview
                         values = [
                             factor, 
                             f"{row['SS']:.4f}", 
-                            f"{row['DF1']:.0f}", 
+                            f"{row['DF1']:.0f}" if 'DF1' in row else f"{row['ddof1']:.0f}", 
                             f"{row['MS']:.4f}",
                             f"{row['F']:.4f}", 
                             f"{row['p-unc']:.4f}", 
