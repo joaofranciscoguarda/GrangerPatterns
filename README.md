@@ -1,153 +1,114 @@
-# Granger Causality Analysis Tool
+# GrangerPatterns
 
-A comprehensive tool for analyzing and visualizing Granger Causality data from EEG electrodes.
-
-## Overview
-
-This tool analyzes Granger Causality (GC) matrices from Excel files to extract key connectivity metrics:
-
-1. **Directional Connectivity Strengths**: Pairwise GC values showing directional influence between electrodes
-2. **Electrode-Level Metrics**: In-strength, out-strength, and causal flow metrics per electrode
-3. **Global Measures**: Overall network connectivity and density metrics
-
-The tool generates publication-quality visualizations and comprehensive PDF reports explaining all results. It includes both a command-line interface and a graphical user interface (GUI) for easy data management and analysis.
+GrangerPatterns is a comprehensive graphical interface for analyzing Granger causality in neural data, with particular emphasis on EEG connectivity patterns. The application provides tools for data loading, analysis, visualization, and statistical testing.
 
 ## Features
 
-- Load and process GC matrices from Excel files
-- Calculate multiple connectivity metrics at different levels of analysis
-- Generate publication-ready visualizations:
-  - Connectivity matrices as heatmaps
-  - Network graphs showing directional connectivity
-  - Bar charts for nodal metrics and pairwise comparisons
-- Generate comprehensive PDF reports with explanations
-- Group-level analysis for multiple participants and conditions
-- User-friendly GUI with:
-  - File management with metadata editing
-  - One-click analysis and visualization
-  - Statistical analysis tools
-- Statistical analysis capabilities:
-  - Outlier detection (Z-score and IQR methods)
-  - Normality testing (Shapiro-Wilk)
-  - ANOVA assumption testing (Levene's test, Breusch-Pagan)
-  - Factorial ANOVA (condition, timepoint, interaction effects)
+- **Data Management**: Easy file import with metadata tagging (participant ID, condition, timepoint)
+- **Granger Causality Analysis**: Analyze directed connectivity between signals
+- **Network Metrics**: Calculate global network metrics, nodal metrics, and pairwise connections
+- **Visualization**: Generate various visualizations:
+  - Connectivity matrices
+  - Network graphs
+  - Nodal metrics plots
+  - Global metrics charts
+  - Pairwise connection comparisons
+- **Statistical Analysis**: Comprehensive statistical tools:
+  - Outlier detection and handling
+  - Normality tests (Shapiro-Wilk)
+  - ANOVA (repeated measures, factorial, mixed designs)
   - Post-hoc tests (Bonferroni, Tukey HSD)
-  - Effect size calculation (partial eta squared)
-  - Observed power analysis
-
-## Directory Structure
-
-```
-├── data/               # Input Excel files with GC matrices
-├── output/             # Output directory
-│   ├── figures/        # Generated visualizations
-│   └── reports/        # Generated PDF reports
-└── src/                # Source code
-    ├── granger_analysis.py    # Core analysis functions
-    ├── main.py                # CLI entry point
-    ├── gui.py                 # GUI application
-    ├── report_generator.py    # Report generation
-    ├── visualize_*.py         # Visualization modules
-```
+  - Effect size calculation (partial eta-squared)
+  - Observed power estimation
 
 ## Installation
 
-1. Clone the repository
-2. Create a virtual environment: `python -m venv venv`
-3. Activate the virtual environment:
-   - Windows: `venv\Scripts\activate`
-   - macOS/Linux: `source venv/bin/activate`
-4. Install dependencies: `pip install -r requirements.txt`
+1. Clone the repository:
+```bash
+git clone https://github.com/YourUsername/GrangerPatterns.git
+cd GrangerPatterns
+```
+
+2. Create a virtual environment and activate it:
+```bash
+python -m venv .venv
+source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+```
+
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+If requirements.txt is not available, install the following packages:
+```bash
+pip install numpy pandas scipy matplotlib seaborn networkx pingouin tkinter statsmodels
+```
 
 ## Usage
 
-### GUI Usage
-
-To launch the graphical user interface:
-
+1. Run the application:
 ```bash
 python src/gui.py
 ```
 
-The GUI provides:
-- File management for adding and editing data files
-- Analysis options for processing data
-- Visualization tools for generating plots
-- Statistical analysis with interactive result displays
+2. **File Selection**: Use the "Add Files" button to select your data files (CSV or Excel)
 
-### Command-Line Usage
+3. **Metadata Assignment**: Double-click on files to assign participant ID, condition, and timepoint
 
-```bash
-python src/main.py
-```
+4. **Analysis**:
+   - Click "Load Data" to load selected files
+   - Click "Analyze All" to perform Granger causality analysis
+   - Click "Generate Tables" to create tabular outputs of results
 
-This will process all Excel files in the `data/` directory.
+5. **Visualization**:
+   - Select a metric type (Global, Nodal, Network, Pairwise, Matrix, or All)
+   - Click "Generate Visualization" to create visualizations
+   - Select an output directory for results
 
-### Options
+6. **Statistical Analysis**:
+   - Click "Open Statistics Window" to access statistical tools
+   - Navigate between tabs for different statistical tests:
+     - Outlier Detection
+     - Normality Tests
+     - Assumption Tests
+     - ANOVA
+     - Post-hoc Tests
 
-```bash
-# Process a specific file
-python src/main.py --file data/my_file.xlsx
+## Statistical Analysis Guide
 
-# Set custom input/output directories
-python src/main.py --data_dir my_data --output_dir my_output
+### Outlier Detection
+- Select a metric and variable
+- Choose detection method (Z-Score or IQR)
+- Identify and optionally remove outliers
 
-# Filter by condition or timepoint for group analysis
-python src/main.py --condition Phase1 --timepoint T2
+### Normality Tests
+- Run Shapiro-Wilk tests to check data normality
+- Group data by condition, timepoint, or both
 
-# Launch GUI
-python src/main.py --gui
-```
+### ANOVA
+- Run different types of ANOVA designs:
+  - Factorial ANOVA (between-subjects)
+  - Repeated Measures ANOVA (within-subjects)
+  - Mixed ANOVA (between-within design)
+- Include factors: Timepoint, Condition, Group
+- View results with effect sizes and observed power
 
-### File Naming Convention
+### Post-hoc Tests
+- Run Bonferroni or Tukey HSD tests
+- Compare groups based on condition, timepoint, or their interaction
 
-Excel files should follow the naming convention: `UTF-[ID]_T[timepoint]_[condition].xlsx`
+## Data Format
 
-Example: `UTF-8002_T2_Phase1.xlsx`
+The application accepts CSV and Excel files with the following expected format:
+- Time series data with each column representing a different signal/electrode
+- Column headers should be meaningful labels for the signals
 
-## Input Data Format
+## Contributors
 
-The Excel files should contain a matrix where:
-- First column contains electrode names (sources)
-- First row contains electrode names (targets)
-- Each cell contains the GC value from source (row) to target (column)
-
-## Output
-
-The tool generates:
-1. Visualization files in PNG format
-2. Individual PDF reports for each analysis
-3. Group-level reports when multiple files are analyzed
-4. Statistical analysis reports and tables
-
-## Statistical Analysis
-
-The statistical analysis module provides:
-
-1. **Outlier Detection**:
-   - Z-Score method (±3 standard deviations)
-   - IQR method (1.5 × interquartile range)
-   - Outlier visualization and export capabilities
-
-2. **Normality Testing**:
-   - Shapiro-Wilk test
-   - Group-based normality assessment (condition, timepoint, or both)
-
-3. **Assumption Testing**:
-   - Homogeneity of variance (Levene's test)
-   - Heteroscedasticity (Breusch-Pagan test)
-
-4. **ANOVA**:
-   - Factorial ANOVA with condition and timepoint factors
-   - Support for interaction effects
-   - Effect size calculation (partial eta squared)
-   - Observed power calculation
-
-5. **Post-hoc Tests**:
-   - Bonferroni correction
-   - Tukey HSD
-   - Pairwise comparison tables
+- Your Name
+- Collaborators
 
 ## License
 
-MIT 
+This project is licensed under the [MIT License](LICENSE). 
