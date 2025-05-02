@@ -1,3 +1,5 @@
+Developed by Dr. Marcelo Bigliassi (Florida International University, USA)
+
 # GrangerPatterns
 
 GrangerPatterns is a comprehensive graphical interface for analyzing Granger causality in neural data, with particular emphasis on EEG connectivity patterns. The application provides tools for data loading, analysis, visualization, and statistical testing.
