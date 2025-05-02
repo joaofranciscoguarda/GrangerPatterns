@@ -106,10 +106,9 @@ The application accepts CSV and Excel files with the following expected format:
 - Time series data with each column representing a different signal/electrode
 - Column headers should be meaningful labels for the signals
 
-## Contributors
+## Contributor
 
-- Your Name
-- Collaborators
+- Dr. Marcelo Bigliassi
 
 ## License
 
