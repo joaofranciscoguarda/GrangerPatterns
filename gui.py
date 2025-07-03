@@ -662,14 +662,13 @@ class GrangerAnalysisGUI:
                 info['timepoint'] = self.timepoint_var.get()
                 info['group'] = self.group_var.get()
                 
-                # Update the treeview
+                # Update the treeview with the correct order
                 self.file_tree.item(self.selected_item_id, values=(
                     info['filename'], 
                     info['participant_id'], 
                     info['condition'], 
-                    info['group'],
-                    info['timepoint'], 
-                    info.get('group', ''),  # Add group column to display
+                    info['timepoint'],   # Correct: Timepoint column
+                    info.get('group', ''),  # Correct: Group column
                     info['status']
                 ))
                 

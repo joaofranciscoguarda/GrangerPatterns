@@ -3,17 +3,24 @@ import networkx as nx
 import os
 
 def plot_network_graph(G, title, output_path):
-    """Plot a network graph of Granger Causality"""
+    """Plot a network graph of Granger Causality in a standardized circular layout"""
     plt.figure(figsize=(12, 10))
     
-    # Default to fixed positions based on typical EEG montage
-    pos = {
-        'F3': (-1, 1), 'F4': (1, 1),
-        'C3': (-1, 0), 'C4': (1, 0),
-        'P3': (-1, -1), 'P4': (1, -1)
-    }
+    # Standardized node order for all figures
+    standard_nodelist = ['F3', 'F4', 'C3', 'C4', 'P3', 'P4']
+    # Compute positions for all possible nodes
+    pos = nx.circular_layout(standard_nodelist)
+
+    # Swap F3 -> C3, C3 -> C4, C4 -> F3
+    if all(node in pos for node in ['F3', 'C3', 'C4']):
+        temp = pos['F3'].copy()
+        pos['F3'] = pos['C3']
+        pos['C3'] = pos['C4']
+        pos['C4'] = temp
+    # Filter positions to only those present in G
+    pos = {node: pos[node] for node in G.nodes() if node in pos}
     
-    # Electrode colors
+    # Electrode colors (fallback to gray if not specified)
     electrode_colors = {
         'F3': '#ff7f0e', 'F4': '#1f77b4',
         'C3': '#2ca02c', 'C4': '#d62728',
@@ -24,11 +31,14 @@ def plot_network_graph(G, title, output_path):
     edge_weights = [G[u][v]['weight'] * 5000 for u, v in G.edges()]
     
     # Draw nodes with custom colors
-    node_colors = [electrode_colors.get(node, '#333333') for node in G.nodes()]
-    nx.draw_networkx_nodes(G, pos, node_size=1500, node_color=node_colors, alpha=0.8)
+    nodelist = list(G.nodes())
+    node_colors = [electrode_colors.get(node, '#333333') for node in nodelist]
+    nx.draw_networkx_nodes(G, pos, nodelist=nodelist, node_size=1500, node_color=node_colors, alpha=0.8)
     
     # Draw edges with varying width based on weight
-    nx.draw_networkx_edges(G, pos, width=edge_weights, alpha=0.6, 
+    edgelist = list(G.edges())
+    edge_widths = edge_weights if len(edge_weights) > 0 else [1.0 for _ in edgelist]
+    nx.draw_networkx_edges(G, pos, edgelist=edgelist, width=edge_widths, alpha=0.6, 
                           arrowsize=20, arrowstyle='->')
     
     # Draw node labels
