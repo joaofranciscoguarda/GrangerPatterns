@@ -336,7 +336,9 @@ class GrangerAnalysisGUIv2:
         )
 
         # Analysis status
-        self.analysis_status = ttk.Label(analysis_frame, text="Ready to analyze")
+        self.analysis_status = ttk.Label(
+            analysis_frame, text="Select files → Load Selected → Analyze Selected"
+        )
         self.analysis_status.pack(side="left", padx=(20, 5))
 
     def create_visualization_frame(self):
@@ -817,7 +819,14 @@ class GrangerAnalysisGUIv2:
     def analyze_selected(self):
         """Analyze the currently loaded data"""
         if not self.analyzer.analyses:
-            messagebox.showwarning("No Data Loaded", "Please load files first")
+            messagebox.showwarning(
+                "No Data Loaded",
+                "Please load files first using the 'Load Selected' button.\n\n"
+                "Steps:\n"
+                "1. Select files in the tree (checkbox them)\n"
+                "2. Click 'Load Selected' to load them into memory\n"
+                "3. Click 'Analyze Selected' to run the analysis",
+            )
             return
 
         try:
@@ -831,8 +840,10 @@ class GrangerAnalysisGUIv2:
                 for file_path in self.selected_files:
                     metadata = self.gui_service.get_file_metadata_quick(file_path)
                     if metadata:
-                        key = f"{metadata['participant_id']}_{metadata['condition']}_{metadata['timepoint']}"
-                        if key == analysis_key and not self.db_service.is_file_cached(file_path):
+                        key = f"{metadata['participant_id']}_{metadata['timepoint']}_{metadata['condition']}"
+                        if key == analysis_key and not self.db_service.is_file_cached(
+                            file_path
+                        ):
                             uncached_files.append(file_path)
                             break
 
@@ -840,12 +851,18 @@ class GrangerAnalysisGUIv2:
             if uncached_files:
                 print(f"Analyzing and caching {len(uncached_files)} files...")
                 self.analyzer.analyze_all_data()
-                
+
                 # Cache the results
                 self.gui_service.cached_loader.cache_analysis_results(
                     self.analyzer, uncached_files
                 )
                 print("✓ Analysis results cached")
+
+                # Force a database stats refresh to verify caching worked
+                stats = self.gui_service.get_file_summary_stats()
+                print(f"Updated stats - Cached analyses: {stats['cached_analyses']}")
+            else:
+                print("All selected files already have cached analyses")
 
             analysis_count = len(self.analyzer.analyses)
             self.analysis_status.config(
@@ -857,7 +874,9 @@ class GrangerAnalysisGUIv2:
             )
 
             # Refresh to show updated status
+            print("Refreshing GUI to show updated analysis status...")
             self.refresh_from_cache()
+            print("GUI refresh completed")
 
         except Exception as e:
             self.analysis_status.config(text="Analysis failed")
@@ -1052,8 +1071,13 @@ class GrangerAnalysisGUIv2:
         """Create the statistical analysis frame with full functionality"""
         if not self.analyzer.analyses:
             messagebox.showwarning(
-                "No Analyses",
-                "No analyses available. Please load and analyze data first.",
+                "No Analyses Available",
+                "No analyses available for statistical testing.\n\n"
+                "Required steps:\n"
+                "1. Select files in the tree (checkbox them)\n"
+                "2. Click 'Load Selected' to load files into memory\n"
+                "3. Click 'Analyze Selected' to run the analysis\n"
+                "4. Then try Statistics again",
             )
             return
 
@@ -1227,9 +1251,20 @@ def main():
     # Initialize the database on startup
     try:
         from services import init_database
+        import sqlite3
 
-        init_database()
+        # Initialize database
+        db_service = init_database()
         print("Database initialized successfully")
+
+        # Clear analysis cache on startup for fresh sessions
+        # This ensures users must explicitly load and analyze files each session
+        with sqlite3.connect(db_service.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM analysis_results")
+            conn.commit()
+            print("Cleared analysis cache - starting fresh session")
+
     except Exception as e:
         print(f"Warning: Could not initialize database: {e}")
 

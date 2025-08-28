@@ -131,33 +131,53 @@ class CachedDataLoaderService:
             file_paths: List of file paths that were analyzed
         """
         print("\nCaching analysis results...")
+        print(f"  Files to cache: {len(file_paths)}")
+        print(f"  Analyses available: {len(analyzer.analyses)}")
 
         # Create a mapping from analysis keys to file paths
+        # Note: Analysis keys must match the format used in granger_analysis.py: participant_timepoint_condition
         analysis_to_file = {}
         for file_path in file_paths:
             metadata = self.get_file_metadata_with_cache(file_path)
-            analysis_key = f"{metadata['participant_id']}_{metadata['condition']}_{metadata['timepoint']}"
-            analysis_to_file[analysis_key] = file_path
+            if metadata:
+                analysis_key = f"{metadata['participant_id']}_{metadata['timepoint']}_{metadata['condition']}"
+                analysis_to_file[analysis_key] = file_path
+                print(f"  Mapped {analysis_key} -> {os.path.basename(file_path)}")
+            else:
+                print(f"  Warning: No metadata found for {file_path}")
+
+        print(f"  Analysis key mappings: {len(analysis_to_file)}")
 
         # Cache results for each analysis
         cached_count = 0
         for analysis_key, analysis in analyzer.analyses.items():
+            print(f"  Processing analysis: {analysis_key}")
             if analysis_key in analysis_to_file:
                 file_path = analysis_to_file[analysis_key]
 
                 try:
-                    # Check if already cached and up to date
-                    if not self.db_service.is_file_cached(file_path):
-                        self.db_service.cache_analysis_result(
-                            file_path=file_path,
-                            analysis_type="granger_causality",
-                            connectivity_matrix=analysis["connectivity_matrix"],
-                            global_metrics=analysis.get("global", {}),
-                            analysis_params={},  # Could be extended with actual parameters
-                        )
-                        cached_count += 1
+                    # Always try to cache - the database will handle duplicates
+                    print(f"    Caching results for: {os.path.basename(file_path)}")
+                    self.db_service.cache_analysis_result(
+                        file_path=file_path,
+                        analysis_type="granger_causality",
+                        connectivity_matrix=analysis["connectivity_matrix"],
+                        global_metrics=analysis.get("global", {}),
+                        analysis_params={},  # Could be extended with actual parameters
+                    )
+                    cached_count += 1
+                    print(
+                        f"    ✓ Successfully cached analysis for {os.path.basename(file_path)}"
+                    )
                 except Exception as e:
-                    print(f"  Warning: Failed to cache results for {file_path}: {e}")
+                    print(f"    ✗ Failed to cache results for {file_path}: {e}")
+                    import traceback
+
+                    traceback.print_exc()
+            else:
+                print(
+                    f"    Warning: No file mapping found for analysis key: {analysis_key}"
+                )
 
         print(f"  Cached {cached_count} new analysis results")
 
