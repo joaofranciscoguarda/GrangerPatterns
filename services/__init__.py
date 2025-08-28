@@ -74,6 +74,17 @@ from .gui_integration_service import (
     populate_gui_from_cache,
 )
 
+# Statistics services
+from .statistics_service import (
+    StatisticsService,
+    get_statistics_service,
+)
+
+from .statistics_gui_service import (
+    StatisticsGUIService,
+    get_statistics_gui_service,
+)
+
 __all__ = [
     # Data loading
     "load_and_analyze_files",
@@ -119,4 +130,9 @@ __all__ = [
     "GUIIntegrationService",
     "get_gui_service",
     "populate_gui_from_cache",
+    # Statistics services
+    "StatisticsService",
+    "get_statistics_service",
+    "StatisticsGUIService",
+    "get_statistics_gui_service",
 ]

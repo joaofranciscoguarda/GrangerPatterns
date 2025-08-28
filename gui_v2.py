@@ -39,7 +39,7 @@ import pingouin as pg
 import re
 
 # Import the new caching services
-from services import get_gui_service, get_database_service
+from services import get_gui_service, get_database_service, get_statistics_gui_service
 
 warnings.filterwarnings("ignore")
 
@@ -67,12 +67,6 @@ class GrangerAnalysisGUIv2:
 
         # Add menu bar
         self._create_menu_bar()
-
-        # Add statistics button
-        stats_button = ttk.Button(
-            self.root, text="Open Statistics Window", command=self.create_stats_frame
-        )
-        stats_button.pack(pady=10)
 
         # Auto-populate from cache on startup
         self.refresh_from_cache()
@@ -337,6 +331,9 @@ class GrangerAnalysisGUIv2:
         ttk.Button(
             btn_frame, text="Generate Tables", command=self.generate_tables
         ).pack(side="left", padx=5)
+        ttk.Button(btn_frame, text="Statistics", command=self.create_stats_frame).pack(
+            side="left", padx=5
+        )
 
         # Analysis status
         self.analysis_status = ttk.Label(analysis_frame, text="Ready to analyze")
@@ -1031,12 +1028,62 @@ class GrangerAnalysisGUIv2:
             traceback.print_exc()
 
     def create_stats_frame(self):
-        """Create the statistical analysis frame - simplified version"""
-        # For now, just show a message that stats are available
-        messagebox.showinfo(
-            "Statistical Analysis",
-            "Statistical analysis features are available in the full version.\n\n"
-            "This cached version focuses on efficient file management and basic analysis.",
+        """Create the statistical analysis frame with full functionality"""
+        if not self.analyzer.analyses:
+            messagebox.showwarning(
+                "No Analyses",
+                "No analyses available. Please load and analyze data first.",
+            )
+            return
+
+        # Create a new window for statistical analysis
+        stats_window = tk.Toplevel(self.root)
+        stats_window.title("Statistical Analysis")
+        stats_window.geometry("1200x800")
+        stats_window.transient(self.root)
+
+        # Create the statistics GUI service
+        stats_gui = get_statistics_gui_service(stats_window, self.analyzer)
+
+        # Create notebook (tabbed interface)
+        notebook = ttk.Notebook(stats_window)
+        notebook.pack(fill="both", expand=True, padx=10, pady=10)
+
+        # Create tabs
+        outlier_tab = ttk.Frame(notebook)
+        normality_tab = ttk.Frame(notebook)
+        assumption_tab = ttk.Frame(notebook)
+        anova_tab = ttk.Frame(notebook)
+        posthoc_tab = ttk.Frame(notebook)
+        paired_test_tab = ttk.Frame(notebook)
+
+        notebook.add(outlier_tab, text="Outlier Detection")
+        notebook.add(normality_tab, text="Normality Tests")
+        notebook.add(assumption_tab, text="Assumption Tests")
+        notebook.add(anova_tab, text="ANOVA")
+        notebook.add(posthoc_tab, text="Post-hoc Tests")
+        notebook.add(paired_test_tab, text="Paired Tests")
+
+        # Create tab content using the statistics GUI service
+        stats_gui.create_outlier_tab(outlier_tab)
+        stats_gui.create_normality_tab(normality_tab)
+        stats_gui.create_assumption_tab(assumption_tab)
+        stats_gui.create_anova_tab(anova_tab)
+        stats_gui.create_posthoc_tab(posthoc_tab)
+        stats_gui.create_paired_test_tab(paired_test_tab)
+
+        # Add a status bar
+        status_frame = ttk.Frame(stats_window)
+        status_frame.pack(fill="x", padx=10, pady=(0, 10))
+
+        stats_info = (
+            f"Loaded {len(self.analyzer.analyses)} analyses for statistical testing"
+        )
+        ttk.Label(status_frame, text=stats_info).pack(side="left")
+
+        # Close button
+        ttk.Button(status_frame, text="Close", command=stats_window.destroy).pack(
+            side="right"
         )
 
     def _ask_groupby(self):
@@ -1112,6 +1159,10 @@ class GrangerAnalysisGUIv2:
             label="Analyze Selected", command=self.analyze_selected
         )
         analysis_menu.add_command(label="Generate Tables", command=self.generate_tables)
+        analysis_menu.add_separator()
+        analysis_menu.add_command(
+            label="Open Statistics Window", command=self.create_stats_frame
+        )
         menubar.add_cascade(label="Analysis", menu=analysis_menu)
 
         # Visualization menu
