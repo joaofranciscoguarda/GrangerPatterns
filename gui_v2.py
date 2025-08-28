@@ -824,8 +824,29 @@ class GrangerAnalysisGUIv2:
             self.analysis_status.config(text="Running analysis...")
             self.root.update()
 
-            # The analysis is already done by the caching system when loading
-            # Just update the display
+            # Check if any files in the analyzer need to be analyzed and cached
+            uncached_files = []
+            for analysis_key, analysis_data in self.analyzer.analyses.items():
+                # Try to find the original file path
+                for file_path in self.selected_files:
+                    metadata = self.gui_service.get_file_metadata_quick(file_path)
+                    if metadata:
+                        key = f"{metadata['participant_id']}_{metadata['condition']}_{metadata['timepoint']}"
+                        if key == analysis_key and not self.db_service.is_file_cached(file_path):
+                            uncached_files.append(file_path)
+                            break
+
+            # If there are uncached files, run analysis and cache results
+            if uncached_files:
+                print(f"Analyzing and caching {len(uncached_files)} files...")
+                self.analyzer.analyze_all_data()
+                
+                # Cache the results
+                self.gui_service.cached_loader.cache_analysis_results(
+                    self.analyzer, uncached_files
+                )
+                print("✓ Analysis results cached")
+
             analysis_count = len(self.analyzer.analyses)
             self.analysis_status.config(
                 text=f"Analysis complete - {analysis_count} analyses ready"

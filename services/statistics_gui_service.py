@@ -97,7 +97,7 @@ class StatisticsGUIService:
             btn_frame, text="Detect Outliers", command=self._detect_outliers
         ).pack(side="left", padx=5)
         ttk.Button(
-            btn_frame, text="Remove Outliers", command=self._remove_outliers
+            btn_frame, text="Apply Mean Imputation", command=self._remove_outliers
         ).pack(side="left", padx=5)
         ttk.Button(
             btn_frame, text="Export Results", command=self._export_outlier_results
@@ -860,7 +860,7 @@ class StatisticsGUIService:
         )
 
     def _remove_outliers(self):
-        """Remove outliers by replacing with mean values"""
+        """Remove outliers by replacing with mean values using mean imputation"""
         if "outlier" not in self.current_results:
             messagebox.showwarning("No Results", "Please run outlier detection first")
             return
@@ -873,18 +873,27 @@ class StatisticsGUIService:
             messagebox.showinfo("No Outliers", "No outliers found to remove")
             return
 
-        # Ask user for confirmation
+        # Calculate the mean of non-outlier values for display
+        non_outlier_mean = outlier_df.loc[~outlier_df["is_outlier"], "Value"].mean()
+
+        # Ask user for confirmation with detailed information
         response = messagebox.askyesno(
-            "Confirm Outlier Removal",
-            f"This will replace {outlier_count} outlier values with mean values.\n\n"
-            "Do you want to continue?",
+            "Confirm Mean Imputation for Outliers",
+            f"Mean Imputation Process:\n\n"
+            f"• Found {outlier_count} outlier value(s)\n"
+            f"• Mean of non-outlier values: {non_outlier_mean:.4f}\n"
+            f"• Each outlier will be replaced with this mean value\n"
+            f"• This neutralizes the effect of extreme outliers\n\n"
+            "Do you want to continue with mean imputation?",
         )
 
         if not response:
             return
 
-        # Remove outliers
-        cleaned_df, removed_count = self.stats_service.remove_outliers(outlier_df)
+        # Remove outliers using mean imputation
+        cleaned_df, removed_count = self.stats_service.remove_outliers(
+            outlier_df, method="mean"
+        )
 
         if removed_count > 0:
             # Update the current results with cleaned data
@@ -897,9 +906,9 @@ class StatisticsGUIService:
             # Populate treeview with cleaned data
             for _, row in cleaned_df.iterrows():
                 is_outlier = row["is_outlier"]
-                status = "Removed (Mean)" if is_outlier else "Normal"
+                status = "Imputed (Mean)" if is_outlier else "Normal"
 
-                # Show mean value for removed outliers
+                # Show imputed mean value for outliers
                 display_value = row["Value"]
 
                 values = [
@@ -919,8 +928,11 @@ class StatisticsGUIService:
             self.trees["outlier"].tag_configure("removed", background="#ffffcc")
 
             messagebox.showinfo(
-                "Outliers Removed",
-                f"Successfully replaced {removed_count} outlier values with mean values.\n"
+                "Mean Imputation Complete",
+                f"Successfully applied mean imputation to {removed_count} outlier values.\n\n"
+                f"• Outliers replaced with mean value: {non_outlier_mean:.4f}\n"
+                f"• Extreme values have been neutralized\n"
+                f"• Yellow highlighted rows show imputed values\n\n"
                 "The data display has been updated to show the cleaned values.",
             )
         else:

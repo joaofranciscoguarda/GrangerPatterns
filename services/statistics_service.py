@@ -206,26 +206,39 @@ class StatisticsService:
         self, df: pd.DataFrame, method: str = "mean"
     ) -> Tuple[pd.DataFrame, int]:
         """
-        Remove outliers by replacing with mean or median
+        Remove outliers using mean or median imputation
+        
+        This method applies multiple imputation technique by replacing outlier values
+        with the mean or median of non-outlier values, effectively neutralizing
+        the effect of extreme outliers while preserving sample size.
 
         Args:
-            df: DataFrame with 'is_outlier' column
+            df: DataFrame with 'is_outlier' column and 'Value' column
             method: Replacement method ('mean' or 'median')
 
         Returns:
-            Tuple of (cleaned DataFrame, number of outliers removed)
+            Tuple of (cleaned DataFrame, number of outliers imputed)
         """
         result_df = df.copy()
         outlier_mask = df["is_outlier"]
         outlier_count = outlier_mask.sum()
 
         if outlier_count > 0:
+            # Calculate replacement value from non-outlier data
+            non_outlier_values = df.loc[~outlier_mask, "Value"]
+            
             if method == "mean":
-                replacement_value = df.loc[~outlier_mask, "Value"].mean()
+                replacement_value = non_outlier_values.mean()
+                print(f"Mean imputation: Replacing {outlier_count} outliers with mean value {replacement_value:.4f}")
             else:  # median
-                replacement_value = df.loc[~outlier_mask, "Value"].median()
+                replacement_value = non_outlier_values.median()
+                print(f"Median imputation: Replacing {outlier_count} outliers with median value {replacement_value:.4f}")
 
+            # Apply imputation
             result_df.loc[outlier_mask, "Value"] = replacement_value
+            
+            # Log the imputation details
+            print(f"Successfully applied {method} imputation to neutralize {outlier_count} outlier(s)")
 
         return result_df, outlier_count
 
